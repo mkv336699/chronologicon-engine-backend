@@ -75,30 +75,7 @@ router.get('/ingestion-status/:jobId', (req, res) => {
   }
 });
 
-// GET /api/timeline/:rootEventId - Hierarchical timeline endpoint
-router.get('/timeline/:rootEventId', async (req, res) => {
-  try {
-    const { rootEventId } = req.params;
-    console.log("rootEventId", rootEventId)
-    
-    // Get the event
-    const event = await eventCollection.getEvent(rootEventId);
-    console.log("timeline", event)
 
-    if (!event) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
-
-    // Build hierarchical timeline
-    const timeline = await buildHierarchicalTimeline(event, eventCollection);
-    console.log("timeline", timeline)
-    res.json(timeline);
-
-  } catch (error) {
-    console.error('Error fetching timeline:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 // GET /api/events/search - Event search endpoint
 router.get('/search', async (req, res) => {
@@ -254,26 +231,6 @@ async function processFileAsync(jobId, filePath) {
   }
 }
 
-// Helper function to build hierarchical timeline
-async function buildHierarchicalTimeline(event, eventCollection) {
-  const timeline = {
-    event_id: event.eventId,
-    event_name: event.eventName,
-    description: event.description,
-    start_date: event.startDate.toISOString(),
-    end_date: event.endDate.toISOString(),
-    duration_minutes: Math.round((event.endDate - event.startDate) / (1000 * 60)),
-    parent_event_id: event.parentId,
-    children: []
-  };
 
-  // Find and add children
-  const children = await eventCollection.getChildEvents(event.eventId);
-  for (const child of children) {
-    timeline.children.push(await buildHierarchicalTimeline(child, eventCollection));
-  }
-
-  return timeline;
-}
 
 module.exports = router;

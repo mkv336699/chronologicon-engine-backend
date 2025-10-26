@@ -1,18 +1,18 @@
 const express = require('express');
 const eventRoutes = require('./events');
 const insightsRoutes = require('./insights');
-const influenceSpreaderRoutes = require('./influenceSpreader');
+const timelineRoutes = require('./timeline');
 
 const router = express.Router();
 
 // Routes
 router.use('/api/events', eventRoutes);
 router.use('/api/insights', insightsRoutes);
-router.use('/api/influence-spreader', influenceSpreaderRoutes);
+router.use('/api/timeline', timelineRoutes);
 
 module.exports = {
   router,
   eventRoutes,
   insightsRoutes,
-  influenceSpreaderRoutes
+  timelineRoutes
 };

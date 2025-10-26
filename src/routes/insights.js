@@ -4,36 +4,36 @@ const { EventCollection } = require('../models/Event');
 const router = express.Router();
 
 /**
- * Find the shortest temporal path between two events using BFS
- * @param {string} sourceEventId - The ID of the source event
- * @param {string} targetEventId - The ID of the target event
- * @param {EventCollection} eventCollection - Instance of EventCollection
- * @returns {Promise<Array>} - Array of events representing the shortest path
+ * Finds the shortest path between two events based on their timing
+ * 
+ * This uses a breadth-first search to find how events might be connected
+ * through time. We're looking for chains where one event could potentially
+ * influence another based on when they happened.
  */
 async function findShortestPath(sourceEventId, targetEventId, eventCollection) {
-  // Get all events
+  // Grab all our events
   const events = await eventCollection.getAllEvents();
   
-  // Create a graph representation where events are nodes
-  // and temporal relationships are edges
+  // Set up our network of events
   const graph = {};
   
-  // Initialize the graph
+  // Every event starts with no connections
   events.forEach(event => {
     graph[event.eventId] = [];
   });
   
-  // Build the graph - connect events that have temporal relationships
-  // An event can influence events that start after it ends
+  // Now let's connect events that could influence each other
+  // An event can only influence something that happens after it
   events.forEach(event1 => {
     const event1End = new Date(event1.endDate || event1.startDate);
     
     events.forEach(event2 => {
+      // Don't connect an event to itself
       if (event1.eventId !== event2.eventId) {
         const event2Start = new Date(event2.startDate);
         
-        // If event1 ends before or at the same time event2 starts,
-        // there's a potential influence (directed edge)
+        // If the first event ends before the second one starts,
+        // there might be a connection
         if (event1End <= event2Start) {
           graph[event1.eventId].push(event2.eventId);
         }
@@ -41,21 +41,23 @@ async function findShortestPath(sourceEventId, targetEventId, eventCollection) {
     });
   });
   
-  // BFS to find shortest path
+  // Let's use BFS to find the shortest path through our event network
   const queue = [{ eventId: sourceEventId, path: [sourceEventId] }];
-  const visited = new Set([sourceEventId]);
+  const visited = new Set([sourceEventId]); // Track what we've already seen
   
   while (queue.length > 0) {
     const { eventId, path } = queue.shift();
     
+    // Did we find what we're looking for?
     if (eventId === targetEventId) {
-      // Found the target, convert path of IDs to path of event objects
+      // Bingo! Now let's format the path nicely
       const pathEvents = [];
       
-      for (let i = 0; i < path.length; i++) {
-        const event = events.find(e => e.eventId === path[i]);
+      // Convert each ID in the path to a full event object
+      path.forEach(id => {
+        const event = events.find(e => e.eventId === id);
         if (event) {
-          // Calculate duration in minutes
+          // Figure out how long this event lasted
           const startDate = new Date(event.startDate);
           const endDate = new Date(event.endDate || event.startDate);
           const durationMinutes = Math.round((endDate - startDate) / (1000 * 60));
@@ -68,12 +70,12 @@ async function findShortestPath(sourceEventId, targetEventId, eventCollection) {
             duration_minutes: durationMinutes
           });
         }
-      }
+      });
       
       return pathEvents;
     }
     
-    // Explore neighbors
+    // Check all the connected events we haven't seen yet
     for (const neighborId of graph[eventId]) {
       if (!visited.has(neighborId)) {
         visited.add(neighborId);
@@ -85,48 +87,49 @@ async function findShortestPath(sourceEventId, targetEventId, eventCollection) {
     }
   }
   
-  // No path found
+  // Couldn't find a path between these events
   return [];
 }
 
 // Create EventCollection instance
 const eventCollection = new EventCollection();
 
-// GET /api/insights/event-influence - Event influence analysis
-// Analyzes how events influence each other based on temporal proximity
+// GET /api/insights/event-influence - See how events affect each other
+// This endpoint shows connections between events based on when they happened
 router.get('/event-influence', async (req, res) => {
   try {
     const { sourceEventId, targetEventId } = req.query;
     
-    // If both IDs are provided, find shortest path between events
+    // If they want to see the connection between two specific events
     if (sourceEventId && targetEventId) {
-      // Verify both events exist
+      // Make sure both events actually exist
       const events = await eventCollection.getAllEvents();
       const sourceEvent = events.find(event => event.eventId === sourceEventId);
       const targetEvent = events.find(event => event.eventId === targetEventId);
       
       if (!sourceEvent) {
-        return res.status(404).json({ error: 'Source event not found' });
+        return res.status(404).json({ error: 'Sorry, we couldn\'t find that source event' });
       }
       
       if (!targetEvent) {
-        return res.status(404).json({ error: 'Target event not found' });
+        return res.status(404).json({ error: 'Sorry, we couldn\'t find that target event' });
       }
       
-      // Find shortest path using BFS
+      // Find the shortest way these events might be connected
       const shortestPath = await findShortestPath(sourceEventId, targetEventId, eventCollection);
       
+      // If there's no connection between them
       if (shortestPath.length === 0) {
         return res.json({
           sourceEventId: sourceEventId,
           targetEventId: targetEventId,
           shortestPath: [],
           totalDurationMinutes: 0,
-          message: "No temporal path found from source to target event."
+          message: "These events don't seem to be connected through time."
         });
       }
 
-      // Calculate total duration
+      // Add up how long all the events in the path took
       const totalDurationMinutes = shortestPath.reduce((total, event) => {
         return total + event.duration_minutes;
       }, 0);
@@ -136,33 +139,33 @@ router.get('/event-influence', async (req, res) => {
         targetEventId: targetEventId,
         shortestPath: shortestPath,
         totalDurationMinutes: totalDurationMinutes,
-        message: "Shortest temporal path found from source to target event."
+        message: "Found a connection between these events!"
       });
     }
     
-    // If only sourceEventId is provided, calculate influence on all other events
+    // If they just want to see what a single event might influence
     if (sourceEventId) {
       const events = await eventCollection.getAllEvents();
       
-      // Find the source event
+      // Find the event they're asking about
       const sourceEvent = events.find(event => event.eventId === sourceEventId);
       
       if (!sourceEvent) {
-        return res.status(404).json({ error: 'Source event not found' });
+        return res.status(404).json({ error: 'We couldn\'t find that event' });
       }
       
-      // Calculate influence based on temporal proximity
+      // Figure out how this event might relate to others based on timing
       const influencedEvents = events
-        .filter(event => event.eventId !== sourceEventId) // Exclude the source event
+        .filter(event => event.eventId !== sourceEventId) // Don't include the event itself
         .map(event => {
           const sourceStart = new Date(sourceEvent.startDate);
           const eventStart = new Date(event.startDate);
           
-          // Calculate temporal distance in days
+          // How many days apart are these events?
           const timeDifference = Math.abs(eventStart - sourceStart) / (1000 * 60 * 60 * 24);
           
-          // Calculate influence score (inverse of time difference)
-          // Events closer in time have higher influence scores
+          // Events that happened closer together have stronger connections
+          // The formula gives us a score from 0-100
           const influenceScore = timeDifference === 0 ? 100 : 100 / (1 + timeDifference);
           
           return {
@@ -172,7 +175,7 @@ router.get('/event-influence', async (req, res) => {
             temporal_distance_days: Math.round(timeDifference * 10) / 10
           };
         })
-        .sort((a, b) => b.influence_score - a.influence_score); // Sort by influence score descending
+        .sort((a, b) => b.influence_score - a.influence_score); // Show strongest connections first
       
       return res.json({
         source_event: {
@@ -183,54 +186,56 @@ router.get('/event-influence', async (req, res) => {
       });
     }
     
-    // If neither sourceEventId nor targetEventId is provided
+    // They didn't give us enough information to work with
     return res.status(400).json({ 
-      error: 'At least sourceEventId query parameter is required' 
+      error: 'Please provide at least a sourceEventId so we know which event to analyze' 
     });
 
   } catch (error) {
-    console.error('Error calculating event influence:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Problem with event influence calculation:', error);
+    res.status(500).json({ error: 'Something went wrong on our end. Please try again later.' });
   }
 });
 
-// GET /api/insights/event-influence-path - Find influence path between events
+// GET /api/insights/event-influence-path - Find the shortest path between events
 router.get('/event-influence-path', async (req, res) => {
   try {
     const { sourceEventId, targetEventId } = req.query;
     
+    // We need both events to find a path between them
     if (!sourceEventId || !targetEventId) {
       return res.status(400).json({ 
-        error: 'sourceEventId and targetEventId query parameters are required' 
+        error: 'We need both a source and target event ID to find a path between them' 
       });
     }
 
-    // Verify both events exist
+    // Let's make sure both events actually exist
     const sourceEvent = await eventCollection.getEvent(sourceEventId);
     const targetEvent = await eventCollection.getEvent(targetEventId);
     
     if (!sourceEvent) {
-      return res.status(404).json({ error: 'Source event not found' });
+      return res.status(404).json({ error: 'We couldn\'t find your source event' });
     }
     
     if (!targetEvent) {
-      return res.status(404).json({ error: 'Target event not found' });
+      return res.status(404).json({ error: 'We couldn\'t find your target event' });
     }
 
-    // Find shortest path using BFS
+    // Now let's find the shortest path between these events
     const shortestPath = await findShortestPath(sourceEventId, targetEventId, eventCollection);
     
+    // If there's no path between them
     if (shortestPath.length === 0) {
       return res.json({
         sourceEventId: sourceEventId,
         targetEventId: targetEventId,
         shortestPath: [],
         totalDurationMinutes: 0,
-        message: "No temporal path found from source to target event."
+        message: "We couldn't find any connection between these events."
       });
     }
 
-    // Calculate total duration
+    // Add up the total duration of all events in the path
     const totalDurationMinutes = shortestPath.reduce((total, event) => {
       return total + event.duration_minutes;
     }, 0);
@@ -240,53 +245,55 @@ router.get('/event-influence-path', async (req, res) => {
       targetEventId: targetEventId,
       shortestPath: shortestPath,
       totalDurationMinutes: totalDurationMinutes,
-      message: "Shortest temporal path found from source to target event."
+      message: "We found the shortest path between your events!"
     });
 
   } catch (error) {
-    console.error('Error finding influence path:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Problem finding path between events:', error);
+    res.status(500).json({ error: 'Something went wrong while mapping the connection between events. Please try again.' });
   }
 });
 
-// GET /api/insights/temporal-gaps - Find gaps between events
+// GET /api/insights/temporal-gaps - Find the gaps in your timeline
 router.get('/temporal-gaps', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     
+    // Make sure we have the dates we need
     if (!startDate || !endDate) {
       return res.status(400).json({ 
-        error: 'startDate and endDate query parameters are required' 
+        error: 'We need both a start and end date to find gaps in your timeline' 
       });
     }
 
-    // Parse dates
+    // Convert the string dates to actual Date objects
     const start = new Date(startDate);
     const end = new Date(endDate);
     
+    // Check if the dates make sense
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({ error: 'Invalid date format' });
+      return res.status(400).json({ error: 'Those dates don\'t look right. Try using YYYY-MM-DD format.' });
     }
     
-    // Get all events including those on or before startDate and on or after endDate
+    // Grab all our events so we can look at the whole timeline
     const events = await eventCollection.getAllEvents();
     
-    // Find the most recent event on or before startDate
-    let mostRecentBeforeStart = null;
-    let earliestAfterEnd = null;
+    // We need to find events just outside our date range too
+    let mostRecentBeforeStart = null; // The last thing that happened before our start date
+    let earliestAfterEnd = null;      // The first thing that happened after our end date
     
     events.forEach(event => {
       const eventEnd = new Date(event.endDate || event.startDate);
       const eventStart = new Date(event.startDate);
       
-      // Find most recent event on or before startDate
+      // Look for the most recent event that ended before or right at our start date
       if (eventEnd <= start) {
         if (!mostRecentBeforeStart || eventEnd > new Date(mostRecentBeforeStart.endDate || mostRecentBeforeStart.startDate)) {
           mostRecentBeforeStart = event;
         }
       }
       
-      // Find earliest event on or after endDate
+      // Look for the earliest event that started after or right at our end date
       if (eventStart >= end) {
         if (!earliestAfterEnd || eventStart < new Date(earliestAfterEnd.startDate)) {
           earliestAfterEnd = event;
@@ -294,25 +301,27 @@ router.get('/temporal-gaps', async (req, res) => {
       }
     });
     
-    // Get events within the time range
+    // Now let's find all events that fall completely within our date range
     const filteredEvents = events.filter(event => {
       const eventStart = new Date(event.startDate);
       const eventEnd = new Date(event.endDate || event.startDate);
       return eventStart >= start && eventEnd <= end;
     });
     
-    // Sort events by start date
+    // Put them in chronological order
     filteredEvents.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
     
-    // Find gaps between events
+    // Let's look for gaps in the timeline
     const gaps = [];
     
-    // Add gap between mostRecentBeforeStart and first event in range (if exists)
+    // First, check if there's a gap between our "before" event and the first event in our range
     if (mostRecentBeforeStart && filteredEvents.length > 0) {
       const beforeEnd = new Date(mostRecentBeforeStart.endDate || mostRecentBeforeStart.startDate);
       const firstStart = new Date(filteredEvents[0].startDate);
       
+      // Is there actually a gap here?
       if (beforeEnd < firstStart) {
+        // Calculate how long the gap is in minutes
         const gapDurationMs = firstStart - beforeEnd;
         const gapDurationMinutes = Math.round(gapDurationMs / (1000 * 60));
         
@@ -400,7 +409,7 @@ router.get('/temporal-gaps', async (req, res) => {
     if (gaps.length === 0) {
       return res.json({
         largestGap: null,
-        message: "No temporal gaps found in the specified time range."
+        message: "Looks like your timeline is pretty solid! We didn't find any gaps in this date range."
       });
     }
     
@@ -411,8 +420,8 @@ router.get('/temporal-gaps', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Error finding temporal gaps:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Problem finding gaps in timeline:', error);
+    res.status(500).json({ error: 'Something went wrong while analyzing your timeline. Please try again.' });
   }
 });
 
